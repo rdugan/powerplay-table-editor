@@ -167,7 +167,7 @@ class AMDPPTFileForm(actionForm.ActionFormV2):
         self._mode = mode if mode in (MODE_OPEN, MODE_SAVE) else MODE_OPEN
 
     def create(self):
-        self.file_widget = self.add(npyscreen.TitleFilename, name="File:")
+        self.file_widget = self.add(npyscreen.TitleFilename, name="File:", begin_entry_at=8)
 
     def on_ok(self):
         file_path = self.file_widget.value
@@ -198,7 +198,7 @@ class AMDPPTFileForm(actionForm.ActionFormV2):
         self.editing = False
 
 
-class AMDPPTTreeForm(npyscreen.FormWithMenus):
+class AMDPPTTreeForm(npyscreen.FormBaseNewWithMenus):
     MENU_KEY = "^X"
 
     def __init__(self, *args, **kwargs):
