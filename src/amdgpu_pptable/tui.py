@@ -1,5 +1,7 @@
 import os
 import ctypes
+import functools
+import operator
 import curses
 import npyscreen
 from npyscreen import npysThemes, utilNotify
@@ -53,7 +55,7 @@ class AMDPPTEditor(npyscreen.NPSAppManaged):
             ignore_root=False, annotation="AMDGPU PowerPlay Table ", content=" "
         )
         for name, table in self.pptables._asdict().items():
-            self.tree_data.append_row(name, table, None)
+            self.tree_data.append_row(name, table)
 
         self.tree_form.tree_widget.values = self.tree_data
         self.tree_form.name = self.file_path
@@ -133,24 +135,14 @@ class AMDPPTTreeWidget(mlTree.MLTreeAnnotatedEditable):
         if not line.text_value:
             return False
         else:
+            tree_data = line._tree_real_value
             try:
-                # attempt to insert into pptables structure - doubles as type check
-                tree_data = line._tree_real_value
-                ppt_parent = tree_data.pptable_parent
-
-                ppt_record = None
-                if isinstance(ppt_parent, ctypes.Array):
-                    index = tree_data.annotation.partition("[")[2][:-1]
-                    ppt_record = ppt_parent[int(index)]
-                else:
-                    ppt_record = getattr(ppt_parent, tree_data.annotation)
-
-                ppt_type = type(ppt_record)
-                ppt_record = ppt_type(line.text_value)
-
-                return True
-            except (IndexError, ValueError):
+                # type check and save to pptable/buffer via callback
+                tree_data.edit_func(tree_data.record_type(line.text_value))
+            except ValueError:
                 return False
+
+            return True
 
 
 class AMDPPTFileForm(actionForm.ActionFormV2):
@@ -167,7 +159,9 @@ class AMDPPTFileForm(actionForm.ActionFormV2):
         self._mode = mode if mode in (MODE_OPEN, MODE_SAVE) else MODE_OPEN
 
     def create(self):
-        self.file_widget = self.add(npyscreen.TitleFilename, name="File:", begin_entry_at=8)
+        self.file_widget = self.add(
+            npyscreen.TitleFilename, name="File:", begin_entry_at=8
+        )
 
     def on_ok(self):
         file_path = self.file_widget.value
@@ -229,12 +223,12 @@ class AMDPPTTreeForm(npyscreen.FormBaseNewWithMenus):
 # extend TreeData class to include row builder
 class AMDPPTTreeData(npyscreen.TreeData):
     @property
-    def pptable_parent(self):
-        return self._pptable_parent if hasattr(self, "_pptable_parent") else None
+    def record_type(self):
+        return self._record_type if hasattr(self, "_record_type") else None
 
-    @pptable_parent.setter
-    def pptable_parent(self, pptable_parent):
-        self._pptable_parent = pptable_parent
+    @record_type.setter
+    def record_type(self, record_type):
+        self._record_type = record_type
 
     @staticmethod
     def type_label(type):
@@ -249,30 +243,33 @@ class AMDPPTTreeData(npyscreen.TreeData):
     def short_type_label(type):
         return AMDPPTTreeData.type_label(type).replace("struct__", "")
 
-    def append_row(self, name, obj, parent):
+    def append_row(self, name, obj, edit_func=None):
         tree_data = self.new_child(expanded=False, annotation=name)
+        obj_type = type(obj)
 
         if isinstance(obj, ctypes.Structure):
-            obj_type = type(obj)
-
             tree_data.set_content(self.short_type_label(obj_type))
 
-            for field_name, _ in obj_type._fields_:
-                tree_data.append_row(field_name, getattr(obj, field_name), obj)
+            for field_name, field_value in obj_type._fields_:
+                tree_data.append_row(
+                    field_name,
+                    getattr(obj, field_name),
+                    functools.partial(setattr, obj, field_name),
+                )
 
         elif isinstance(obj, ctypes.Array):
-            obj_type = type(obj)
-
             tree_data.set_content(self.short_type_label(obj_type))
 
             for i in range(len(obj)):
-                tree_data.append_row(f"{name}[{i}]", obj[i], obj)
+                tree_data.append_row(
+                    f"{name}[{i}]", obj[i], functools.partial(operator.setitem, obj, i)
+                )
 
         else:
-            tree_data.set_content(str(obj))
+            tree_data.record_type = obj_type
+            tree_data.edit_func = edit_func
             tree_data.editable = True
-            # save ref to pptable parent struct/list for easy update of value on edit
-            tree_data.pptable_parent = parent
+            tree_data.set_content(str(obj))
 
 
 def main():
